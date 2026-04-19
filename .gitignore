@@ -1,0 +1,112 @@
+# =========================
+# ENV & SECRETS (CRITICAL)
+# =========================
+.env
+.env.*
+*.env
+env/.env
+inference-service/.env
+worker-service/.env
+server/.env
+client/.env
+
+# API keys / secrets
+*.pem
+*.key
+*.crt
+secrets.yaml
+k8s/*secret*.yaml
+
+# =========================
+# PYTHON
+# =========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+
+# virtual environments
+venv/
+env/
+.venv/
+ENV/
+
+# =========================
+# NODE / REACT
+# =========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+
+# build outputs
+client/build/
+client/dist/
+server/dist/
+
+# =========================
+# DOCKER
+# =========================
+docker-compose.override.yml
+*.log
+
+# =========================
+# DATABASE / STORAGE
+# =========================
+*.db
+*.sqlite
+*.sqlite3
+
+# Redis dump files
+dump.rdb
+appendonly.aof
+
+# Mongo local data
+/data/db/
+
+# =========================
+# MONITORING
+# =========================
+grafana_data/
+prometheus_data/
+
+# =========================
+# OS / EDITOR
+# =========================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# =========================
+# TEST / TEMP FILES
+# =========================
+*.tmp
+*.temp
+*.swp
+*.bak
+
+# =========================
+# KUBERNETES BUILD FILES
+# =========================
+*.yaml.bak
+*.yml.bak
+
+# =========================
+# LARGE FILES (IMPORTANT)
+# =========================
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+*.mp4
+*.csv
+
+# =========================
+# LOGS
+# =========================
+logs/
+*.log

@@ -1,0 +1,119 @@
+version: "3.9"
+
+services:
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  env-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.env
+    ports:
+      - "7860:7860"
+    env_file: env/.env
+    environment:
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  inference-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.inference
+    ports:
+      - "8001:8001"
+    env_file: env/.env
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - ENV_SERVICE_URL=http://env-service:7860
+    depends_on:
+      redis:
+        condition: service_healthy
+      env-service:
+        condition: service_started
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 256m
+
+  worker-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    env_file: env/.env
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - MONGO_URI=${MONGO_URI}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  dashboard-service:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - MONGO_URI=${MONGO_URI}
+      - ENV_SERVICE_URL=http://env-service:7860
+      - NODE_ENV=production
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  grafana_data:
