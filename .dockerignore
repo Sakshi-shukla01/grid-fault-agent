@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments (IMPORTANT)
+venv/
+env/venv/
+.venv/
+
+# Environment files
+.env
+
+# Git
+.git/
+.gitignore
+
+# Node (if frontend exists)
+node_modules/
+client/node_modules/
+client/build/
+
+# Testing / cache
+**/.pytest_cache/
+**/test_*.py
+
+# Logs & temp
+*.log
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docs (optional)
+*.md

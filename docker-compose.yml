@@ -1,9 +1,8 @@
-version: "3.9"
-
 services:
 
   redis:
     image: redis:7-alpine
+    container_name: gridfault-redis
     ports:
       - "6379:6379"
     command: redis-server --appendonly yes
@@ -16,10 +15,25 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # ✅ NEW SERVICE ADDED (only change)
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: gridfault-redis-exporter
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+    ports:
+      - "9121:9121"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   env-service:
     build:
       context: .
       dockerfile: Dockerfile.env
+    image: sakshishukla10/grid-fault-env:latest
+    container_name: gridfault-env
     ports:
       - "7860:7860"
     env_file: env/.env
@@ -29,15 +43,12 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 512m
 
   inference-service:
     build:
       context: .
       dockerfile: Dockerfile.inference
+    image: sakshishukla10/grid-fault-inference:latest
     ports:
       - "8001:8001"
     env_file: env/.env
@@ -50,51 +61,43 @@ services:
       env-service:
         condition: service_started
     restart: unless-stopped
-    deploy:
-      replicas: 2
-      resources:
-        limits:
-          memory: 256m
 
   worker-service:
     build:
       context: .
       dockerfile: Dockerfile.worker
+    image: sakshishukla10/grid-fault-worker:latest
+    container_name: gridfault-worker
     env_file: env/.env
     environment:
       - REDIS_URL=redis://redis:6379
-      - MONGO_URI=${MONGO_URI}
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 256m
 
   dashboard-service:
     build:
       context: ./server
       dockerfile: Dockerfile
+    image: sakshishukla10/grid-fault-dashboard:latest
+    container_name: gridfault-dashboard
     ports:
       - "5000:5000"
     environment:
       - REDIS_URL=redis://redis:6379
-      - MONGO_URI=${MONGO_URI}
       - ENV_SERVICE_URL=http://env-service:7860
       - NODE_ENV=production
+      - PORT=5000
+    env_file: server/.env
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 256m
 
   prometheus:
     image: prom/prometheus:latest
+    container_name: gridfault-prometheus
     ports:
       - "9090:9090"
     volumes:
@@ -103,10 +106,11 @@ services:
 
   grafana:
     image: grafana/grafana:latest
+    container_name: gridfault-grafana
     ports:
       - "3001:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana_data:/var/lib/grafana
@@ -117,3 +121,7 @@ services:
 volumes:
   redis_data:
   grafana_data:
+
+networks:
+  default:
+    name: gridfault-network 

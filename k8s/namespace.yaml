@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gridfault
+  labels:
+    project: grid-fault-agent
+    owner: sakshishukla10

@@ -4,23 +4,24 @@ import json
 import asyncio
 import httpx
 import redis.asyncio as aioredis
-from openai          import OpenAI
-from dotenv          import load_dotenv
-from fastapi         import FastAPI
+from openai           import OpenAI
+from dotenv           import load_dotenv
+from fastapi          import FastAPI
+from contextlib       import asynccontextmanager
 from prometheus_client import Counter, Histogram, generate_latest
 from starlette.responses import Response
+import uvicorn
 
 load_dotenv()
 
-app        = FastAPI(title="Inference Service")
-llm_client = OpenAI(
-    base_url = os.environ["API_BASE_URL"],
-    api_key  = os.environ["HF_TOKEN"]
-)
+REDIS_URL  = os.environ.get("REDIS_URL",      "redis://localhost:6379")
+ENV_URL    = os.environ.get("ENV_SERVICE_URL", "http://localhost:7860")
+MODEL_NAME = os.environ.get("MODEL_NAME",      "llama3-8b-8192")
 
-REDIS_URL     = os.environ.get("REDIS_URL",     "redis://localhost:6379")
-ENV_URL       = os.environ.get("ENV_SERVICE_URL","http://localhost:7860")
-MODEL_NAME    = os.environ.get("MODEL_NAME",    "llama3-8b-8192")
+llm_client = OpenAI(
+    base_url = os.environ.get("API_BASE_URL", "https://api.groq.com/openai/v1"),
+    api_key  = os.environ.get("HF_TOKEN",     "")
+)
 
 VALID_ACTION_TYPES = ["identify_fault","query_telemetry","isolate_breaker","submit_rca"]
 VALID_FAULT_TYPES  = ["line_trip","transformer_overload","relay_maloperation",
@@ -32,13 +33,13 @@ FT_MAP = {
     "comms_loss":"scada_loss","relay_trip":"relay_maloperation"
 }
 
-steps_counter   = Counter("inference_steps_total",   "Total steps taken")
-errors_counter  = Counter("inference_errors_total",  "Total LLM errors")
-reward_hist     = Histogram("inference_reward",       "Step reward distribution")
-episode_counter = Counter("inference_episodes_total", "Total episodes run")
+steps_counter   = Counter("inference_steps_total",    "Total steps")
+errors_counter  = Counter("inference_errors_total",   "Total errors")
+reward_hist     = Histogram("inference_reward",        "Reward distribution")
+episode_counter = Counter("inference_episodes_total", "Total episodes")
 
 SYSTEM_PROMPT = """You are a power grid fault engineer. Output ONLY raw JSON.
-Format: {"action_type":"identify_fault","component_id":"RELAY_89","fault_type":"relay_maloperation","severity":"critical","description":"RELAY_89 maloperation zone_1 distance trip despite normal current","recommendation":"Check relay settings"}
+Format: {"action_type":"identify_fault","component_id":"RELAY_89","fault_type":"relay_maloperation","severity":"critical","description":"RELAY_89 maloperation zone_1 distance trip despite normal current","recommendation":"Check relay"}
 action_type: identify_fault|query_telemetry|isolate_breaker|submit_rca
 fault_type: line_trip|transformer_overload|relay_maloperation|phase_imbalance|scada_loss|capacitor_failure
 severity: critical|major|minor
@@ -46,7 +47,7 @@ description always required. Never repeat components in AlreadyFound."""
 
 
 def build_prompt(obs: dict) -> str:
-    already = [f["component_id"] for f in obs.get("identified_faults", [])]
+    already   = [f["component_id"] for f in obs.get("identified_faults", [])]
     not_found = [c for c in [
         "RELAY_89","LINE_8_9","LINE_9_10","LINE_10_11",
         "BUS_9","BUS_10","BUS_11","RELAY_910","RELAY_1011","TX_8_9"
@@ -63,18 +64,18 @@ def build_prompt(obs: dict) -> str:
 
 
 def sanitize(raw: dict) -> dict:
-    at  = str(raw.get("action_type","")).strip().lower()
-    cid = str(raw.get("component_id","")).strip()
-    desc= str(raw.get("description","")).strip()
-    ft  = str(raw.get("fault_type","") or "").strip().lower()
-    sev = str(raw.get("severity","") or "").strip().lower()
-    rec = raw.get("recommendation")
+    at   = str(raw.get("action_type",  "")).strip().lower()
+    cid  = str(raw.get("component_id", "")).strip()
+    desc = str(raw.get("description",  "")).strip()
+    ft   = str(raw.get("fault_type",   "") or "").strip().lower()
+    sev  = str(raw.get("severity",     "") or "").strip().lower()
+    rec  = raw.get("recommendation")
     if ft not in VALID_FAULT_TYPES:
         ft = FT_MAP.get(ft, None)
     return {
         "action_type":    at  if at  in VALID_ACTION_TYPES else "query_telemetry",
         "component_id":   cid or "UNKNOWN",
-        "description":    desc if len(desc)>=5 else f"Inspecting {cid} from SCADA.",
+        "description":    desc if len(desc) >= 5 else f"Inspecting {cid}.",
         "fault_type":     ft,
         "severity":       sev if sev in VALID_SEVERITIES else None,
         "recommendation": str(rec).strip() if rec else None,
@@ -82,36 +83,39 @@ def sanitize(raw: dict) -> dict:
 
 
 def parse_action(text: str) -> dict | None:
-    text = text.strip()
+    text  = text.strip()
     first = text.find("{")
     last  = text.rfind("}")
     if first == -1 or last == -1:
         return None
     try:
-        return sanitize(json.loads(text[first:last+1]))
+        return sanitize(json.loads(text[first:last + 1]))
     except Exception:
         return None
 
 
 async def run_episode(task_id: str, redis_client) -> dict:
     episode_counter.inc()
-    async with httpx.AsyncClient() as client:
-        r = await client.post(f"{ENV_URL}/reset", json={"task_id": task_id}, timeout=30)
+    async with httpx.AsyncClient() as c:
+        r   = await c.post(f"{ENV_URL}/reset", json={"task_id": task_id}, timeout=30)
         obs = r.json()
 
     consecutive_dupes = 0
 
     while not obs.get("done", False):
-        already = {f["component_id"] for f in obs.get("identified_faults", [])}
+        already         = {f["component_id"] for f in obs.get("identified_faults", [])}
         steps_remaining = obs["max_steps"] - obs["step_number"]
 
         if steps_remaining <= 1 or consecutive_dupes >= 2:
-            action = sanitize({"action_type":"submit_rca","component_id":"NONE",
-                                "description":"Submitting final RCA report."})
+            action = sanitize({
+                "action_type":  "submit_rca",
+                "component_id": "NONE",
+                "description":  "Submitting final RCA report."
+            })
         else:
             messages = [
-                {"role":"system","content":SYSTEM_PROMPT},
-                {"role":"user",  "content":build_prompt(obs)}
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user",   "content": build_prompt(obs)}
             ]
             try:
                 resp   = llm_client.chat.completions.create(
@@ -121,9 +125,11 @@ async def run_episode(task_id: str, redis_client) -> dict:
                 reply  = resp.choices[0].message.content.strip()
                 action = parse_action(reply)
                 if action is None:
-                    action = sanitize({"action_type":"query_telemetry",
-                                       "component_id":"BUS_1",
-                                       "description":"Fallback query after parse error."})
+                    action = sanitize({
+                        "action_type":  "query_telemetry",
+                        "component_id": "BUS_1",
+                        "description":  "Fallback query after parse error."
+                    })
             except Exception as e:
                 errors_counter.inc()
                 print(f"LLM error: {e}")
@@ -134,14 +140,16 @@ async def run_episode(task_id: str, redis_client) -> dict:
             consecutive_dupes += 1
             not_done = [c for c in ["LINE_8_9","LINE_9_10","BUS_9","BUS_10","TX_8_9"]
                         if c not in already]
-            action = sanitize({"action_type":"query_telemetry",
-                                "component_id": not_done[0] if not_done else "BUS_1",
-                                "description":"Redirected query — avoiding duplicate."})
+            action = sanitize({
+                "action_type":  "query_telemetry",
+                "component_id": not_done[0] if not_done else "BUS_1",
+                "description":  "Redirected — avoiding duplicate."
+            })
         else:
             consecutive_dupes = 0
 
-        async with httpx.AsyncClient() as client:
-            r = await client.post(f"{ENV_URL}/step", json=action, timeout=30)
+        async with httpx.AsyncClient() as c:
+            r = await c.post(f"{ENV_URL}/step", json=action, timeout=30)
             if r.status_code != 200:
                 continue
             obs = r.json()
@@ -159,23 +167,23 @@ async def run_episode(task_id: str, redis_client) -> dict:
 
     if obs.get("done"):
         await redis_client.publish("episodes:complete", json.dumps({
-            "task_id":    task_id,
-            "metadata":   obs.get("metadata", {}),
-            "faults":     obs.get("identified_faults", [])
+            "task_id":  task_id,
+            "metadata": obs.get("metadata", {}),
+            "faults":   obs.get("identified_faults", [])
         }))
 
     return obs
 
 
-@app.post("/run")
-async def run(body: dict):
-    task_id = body.get("task_id", "radial_fault")
-    redis_client = aioredis.from_url(REDIS_URL)
-    try:
-        result = await run_episode(task_id, redis_client)
-        return {"status": "complete", "metadata": result.get("metadata", {})}
-    finally:
-        await redis_client.aclose()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.redis = aioredis.from_url(REDIS_URL)
+    print("Inference service started — waiting for /run requests")
+    yield
+    await app.state.redis.aclose()
+
+
+app = FastAPI(title="Inference Service", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -186,3 +194,28 @@ def health():
 @app.get("/metrics")
 def metrics():
     return Response(generate_latest(), media_type="text/plain")
+
+
+@app.post("/run")
+async def run(body: dict):
+    task_id = body.get("task_id", "radial_fault")
+    try:
+        result = await run_episode(task_id, app.state.redis)
+        return {
+            "status":   "complete",
+            "metadata": result.get("metadata", {}),
+            "faults":   result.get("identified_faults", [])
+        }
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+
+@app.post("/run-background")
+async def run_background(body: dict):
+    task_id = body.get("task_id", "radial_fault")
+    asyncio.create_task(run_episode(task_id, app.state.redis))
+    return {"status": "started", "task_id": task_id}
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8001)
