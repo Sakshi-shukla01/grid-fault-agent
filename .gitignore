@@ -9,6 +9,7 @@ inference-service/.env
 worker-service/.env
 server/.env
 client/.env
+minikube-linux-amd64
 
 # API keys / secrets
 *.pem
