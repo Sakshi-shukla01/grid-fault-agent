@@ -1,19 +1,5 @@
 ---
-title: Grid Fault Localization Agent
-emoji: ⚡
-colorFrom: blue
-colorTo: purple
-sdk: docker
-app_port: 7860
-pinned: false
-license: mit
-tags:
-  - openenv
-  - reinforcement-learning
-  - power-systems
----
 
----
 title: Grid Fault Localization Agent
 emoji: ⚡
 colorFrom: blue
@@ -186,3 +172,13 @@ kubectl get pods -n gridfault
 ## License
 
 MIT — Sakshi Shukla
+=======
+title: Grid Fault Agent
+emoji: 🏆
+colorFrom: indigo
+colorTo: pink
+sdk: docker
+pinned: false
+---
+
+Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
