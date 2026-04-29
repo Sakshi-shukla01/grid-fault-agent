@@ -1,0 +1,52 @@
+name: grid-fault-localization-agent
+version: "1.0.0"
+author: Sakshi Shukla
+github: https://github.com/Sakshi-shukla01/grid-fault-agent
+huggingface: https://huggingface.co/spaces/sakshi898/grid-fault-agent1
+
+description: >
+  RL environment for real-time power grid fault diagnosis.
+  AI agents analyse SCADA telemetry and relay logs to identify
+  faults before blackouts cascade. $150B industry problem.
+
+license: MIT
+
+api:
+  base_url: https://sakshi898-grid-fault-agent1.hf.space
+  local_url: http://localhost:7860
+  endpoints:
+    reset:     POST /reset
+    step:      POST /step
+    state:     GET  /state
+    health:    GET  /health
+    scenarios: GET  /scenarios
+
+tasks:
+  - id: radial_fault
+    difficulty: easy
+    max_steps: 10
+    ground_truth_faults: 6
+
+  - id: cascade_ring
+    difficulty: medium
+    max_steps: 14
+    ground_truth_faults: 10
+
+  - id: storm_mesh
+    difficulty: hard
+    max_steps: 20
+    ground_truth_faults: 25
+
+reward_design:
+  correct_critical:  +0.30
+  correct_major:     +0.25
+  correct_minor:     +0.20
+  false_positive:    -0.05
+  duplicate:         -0.10
+
+grading:
+  recall:        40%
+  precision:     25%
+  cascade_score: 20%
+  efficiency:    15%
+  method: deterministic keyword matching
