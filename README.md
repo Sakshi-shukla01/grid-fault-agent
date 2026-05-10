@@ -95,7 +95,7 @@ curl -X POST http://localhost:8001/run \
 
 ---
 
-## Action Space
+## Action space
 
 ```json
 {
