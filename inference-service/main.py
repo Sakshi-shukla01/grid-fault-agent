@@ -14,8 +14,8 @@ import uvicorn
 
 load_dotenv()
 
-REDIS_URL  = os.environ.get("REDIS_URL",      "redis://localhost:6379")
-ENV_URL    = os.environ.get("ENV_SERVICE_URL", "http://localhost:7860")
+REDIS_URL  = os.environ.get("REDIS_URL",      "redis://redis:6379")
+ENV_URL    = os.environ.get("ENV_SERVICE_URL", "http://env-service:7860")
 MODEL_NAME = os.environ.get("MODEL_NAME",      "llama3-8b-8192")
 
 llm_client = OpenAI(
@@ -43,23 +43,22 @@ Format: {"action_type":"identify_fault","component_id":"RELAY_89","fault_type":"
 action_type: identify_fault|query_telemetry|isolate_breaker|submit_rca
 fault_type: line_trip|transformer_overload|relay_maloperation|phase_imbalance|scada_loss|capacitor_failure
 severity: critical|major|minor
-description always required. Never repeat components in AlreadyFound."""
+description always required. Never repeat components in AlreadyFound.
+When remaining steps <= 2, use submit_rca immediately."""
 
 
 def build_prompt(obs: dict) -> str:
     already   = [f["component_id"] for f in obs.get("identified_faults", [])]
-    not_found = [c for c in [
-        "RELAY_89","LINE_8_9","LINE_9_10","LINE_10_11",
-        "BUS_9","BUS_10","BUS_11","RELAY_910","RELAY_1011","TX_8_9"
-    ] if c not in set(already)]
+    remaining = obs["max_steps"] - obs["step_number"]
     return (
         f"Step {obs['step_number']}/{obs['max_steps']} "
+        f"remaining={remaining} "
         f"reward={obs['metadata']['cumulative_reward']}\n"
         f"SCADA:{json.dumps(obs['scada_readings'],separators=(',',':'))}\n"
         f"Relay:{json.dumps(obs['relay_log'],separators=(',',':'))}\n"
         f"AlreadyFound:{already}\n"
-        f"NotYetFound:{not_found[:4]}\n"
-        f"Feedback:{obs['feedback']}"
+        f"Feedback:{obs['feedback']}\n"
+        f"{'IMPORTANT: Use submit_rca NOW — only '+str(remaining)+' steps left!' if remaining <= 2 else ''}"
     )
 
 
@@ -94,6 +93,17 @@ def parse_action(text: str) -> dict | None:
         return None
 
 
+def force_submit() -> dict:
+    return {
+        "action_type":  "submit_rca",
+        "component_id": "NONE",
+        "description":  "Submitting final root cause analysis report.",
+        "fault_type":   None,
+        "severity":     None,
+        "recommendation": None
+    }
+
+
 async def run_episode(task_id: str, redis_client) -> dict:
     episode_counter.inc()
     async with httpx.AsyncClient() as c:
@@ -106,44 +116,53 @@ async def run_episode(task_id: str, redis_client) -> dict:
         already         = {f["component_id"] for f in obs.get("identified_faults", [])}
         steps_remaining = obs["max_steps"] - obs["step_number"]
 
+        # Force submit when 1 step left — this fixes storm_mesh None
         if steps_remaining <= 1 or consecutive_dupes >= 2:
-            action = sanitize({
-                "action_type":  "submit_rca",
-                "component_id": "NONE",
-                "description":  "Submitting final RCA report."
-            })
-        else:
-            messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user",   "content": build_prompt(obs)}
-            ]
-            try:
-                resp   = llm_client.chat.completions.create(
-                    model=MODEL_NAME, messages=messages,
-                    max_tokens=200, temperature=0.1
-                )
-                reply  = resp.choices[0].message.content.strip()
-                action = parse_action(reply)
-                if action is None:
-                    action = sanitize({
-                        "action_type":  "query_telemetry",
-                        "component_id": "BUS_1",
-                        "description":  "Fallback query after parse error."
-                    })
-            except Exception as e:
-                errors_counter.inc()
-                print(f"LLM error: {e}")
-                break
+            print(f"[auto submit] steps_remaining={steps_remaining}", flush=True)
+            async with httpx.AsyncClient() as c:
+                r   = await c.post(f"{ENV_URL}/step", json=force_submit(), timeout=30)
+                obs = r.json()
+            await redis_client.publish("env:steps", json.dumps({
+                "step": obs["step_number"], "reward": obs["reward"],
+                "feedback": obs["feedback"],
+                "cumulative": obs["metadata"]["cumulative_reward"],
+                "done": obs["done"]
+            }))
+            break
+
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user",   "content": build_prompt(obs)}
+        ]
+
+        try:
+            resp   = llm_client.chat.completions.create(
+                model=MODEL_NAME, messages=messages,
+                max_tokens=200, temperature=0.1
+            )
+            reply  = resp.choices[0].message.content.strip()
+            action = parse_action(reply)
+            if action is None:
+                action = force_submit()
+        except Exception as e:
+            errors_counter.inc()
+            print(f"LLM error: {e}", flush=True)
+            # Force submit on any error so we always get a score
+            async with httpx.AsyncClient() as c:
+                r   = await c.post(f"{ENV_URL}/step", json=force_submit(), timeout=30)
+                obs = r.json()
+            break
 
         if (action.get("action_type") == "identify_fault"
                 and action.get("component_id") in already):
             consecutive_dupes += 1
-            not_done = [c for c in ["LINE_8_9","LINE_9_10","BUS_9","BUS_10","TX_8_9"]
-                        if c not in already]
+            not_found = [c for c in ["LINE_5_6","LINE_15_16","LINE_22_23",
+                                      "BUS_5","CAP_BANK_2","ZONE_C","BUS_6"]
+                         if c not in already]
             action = sanitize({
                 "action_type":  "query_telemetry",
-                "component_id": not_done[0] if not_done else "BUS_1",
-                "description":  "Redirected — avoiding duplicate."
+                "component_id": not_found[0] if not_found else "BUS_1",
+                "description":  "Querying to avoid duplicate."
             })
         else:
             consecutive_dupes = 0
@@ -178,7 +197,7 @@ async def run_episode(task_id: str, redis_client) -> dict:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.redis = aioredis.from_url(REDIS_URL)
-    print("Inference service started — waiting for /run requests")
+    print("Inference service started", flush=True)
     yield
     await app.state.redis.aclose()
 

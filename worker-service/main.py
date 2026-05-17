@@ -2,14 +2,19 @@ from __future__ import annotations
 import os
 import json
 import redis
-from pymongo  import MongoClient
-from dotenv   import load_dotenv
-from datetime import datetime
+import threading
+from pymongo              import MongoClient
+from dotenv               import load_dotenv
+from datetime             import datetime
+from prometheus_client    import Counter, start_http_server
 
 load_dotenv()
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379")
 MONGO_URI = os.environ.get("MONGO_URI", "")
+
+saved_counter  = Counter("worker_episodes_saved",  "Episodes saved to MongoDB")
+errors_counter = Counter("worker_errors_total",    "Worker errors")
 
 print("Worker starting...", flush=True)
 print(f"REDIS_URL: {REDIS_URL}", flush=True)
@@ -32,6 +37,16 @@ try:
 except Exception as e:
     print(f"Redis failed: {e}", flush=True)
     exit(1)
+
+# Start Prometheus metrics server on port 9101
+def start_metrics():
+    try:
+        start_http_server(9101)
+        print("Prometheus metrics server started on port 9101", flush=True)
+    except Exception as e:
+        print(f"Metrics server failed: {e}", flush=True)
+
+threading.Thread(target=start_metrics, daemon=True).start()
 
 pubsub = r.pubsub()
 pubsub.subscribe("episodes:complete")
@@ -61,6 +76,8 @@ for message in pubsub.listen():
                     "created_at":  datetime.utcnow()
                 }
                 result = col.insert_one(doc)
+                saved_counter.inc()
                 print(f"Saved: {result.inserted_id}", flush=True)
         except Exception as e:
+            errors_counter.inc()
             print(f"Error: {e}", flush=True)

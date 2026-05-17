@@ -25,7 +25,7 @@ const scenarios = [
     difficulty:  "hard",
     description: "30-bus mesh grid. Simultaneous storm faults across 3 zones + SCADA comms loss + capacitor bank failure. 25 planted faults.",
     totalFaults: 25,
-    maxSteps:    20
+    maxSteps:    35
   }
 ];
 

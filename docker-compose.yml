@@ -104,7 +104,7 @@ services:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
     restart: unless-stopped
 
-  grafana:
+  zx:
     image: grafana/grafana:latest
     container_name: gridfault-grafana
     ports:
