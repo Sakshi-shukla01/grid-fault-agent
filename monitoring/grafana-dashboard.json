@@ -1,0 +1,120 @@
+{
+  "id": 2481102375391232,
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "afmdel4uwiha8c"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "env_steps_total",
+          "refId": "A"
+        }
+      ],
+      "title": "Total Steps",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "afmdel4uwiha8c"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "env_resets_total",
+          "refId": "A"
+        }
+      ],
+      "title": "Episodes Run",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "afmdel4uwiha8c"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "inference_steps_total",
+          "refId": "A"
+        }
+      ],
+      "title": "Inference Steps",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "afmdel4uwiha8c"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "inference_errors_total",
+          "refId": "A"
+        }
+      ],
+      "title": "LLM Errors",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "afmdel4uwiha8c"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "rate(env_step_reward_sum[2m])",
+          "legendFormat": "reward",
+          "refId": "A"
+        }
+      ],
+      "title": "Rewards Over Time",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 38,
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "title": "Grid Fault Agent",
+  "uid": "ec5cbd5f-eead-4dd0-9813-345e1b357080",
+  "version": 1
+}
