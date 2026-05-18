@@ -101,7 +101,24 @@ app.add_middleware(
     allow_headers  = ["*"],
 )
 
-
+@app.get("/")
+def root():
+    return {
+        "name": "Grid Fault Localization Agent",
+        "version": "1.0.0",
+        "status": "running",
+        "description": "RL environment for power grid fault diagnosis",
+        "endpoints": {
+            "health":    "/health",
+            "docs":      "/docs",
+            "scenarios": "/scenarios",
+            "reset":     "POST /reset",
+            "step":      "POST /step",
+            "state":     "GET /state"
+        },
+        "live_api": "https://sakshi898-grid-fault-agent1.hf.space/docs",
+        "github":   "https://github.com/Sakshi-shukla01/grid-fault-agent"
+    }
 @app.get("/health")
 def health():
     return {"status": "healthy"}
